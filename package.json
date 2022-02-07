@@ -1,0 +1,20 @@
+{
+  "name": "webgpu-samples",
+  "version": "1.0.0",
+  "description": "",
+  "exports": "./out.js",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --outfile=index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "gl-matrix": "^3.4.3"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.11",
+    "esbuild": "^0.14.18",
+    "webpack": "^5.68.0"
+  }
+}
