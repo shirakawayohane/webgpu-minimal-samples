@@ -10,17 +10,15 @@ import {
 export async function init() {
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter.requestDevice();
-  const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+  const canvas = document.querySelector("canvas");
   const context = canvas.getContext("webgpu");
   const devicePixelRatio = window.devicePixelRatio || 1;
-  const presentationSize = [
-    canvas.clientWidth * devicePixelRatio,
-    canvas.clientHeight * devicePixelRatio,
-  ];
+  const presentationSize = [canvas.clientWidth, canvas.clientHeight];
   const presentationFormat = context.getPreferredFormat(adapter);
   context.configure({
     device,
     format: presentationFormat,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     size: presentationSize,
   });
 
@@ -34,42 +32,52 @@ export async function init() {
 
   const vsModule = device.createShaderModule({
     code: `
-        struct Uniforms {
-            mvpMat : mat4x4<f32>;
-        }
+struct Uniforms {
+    mvpMat: mat4x4<f32>;
+}
 
-        @binding(0) @group(0) var<uniform> uniforms: Uniforms;
+@binding(0) @group(0) var<uniform> uniforms: Uniforms;
 
-        struct VertexOutput {
-            @builtin(position) pos: vec4<f32>;
-            @location(0) fragUV: vec2<f32>;
-            @location(1) fragPosition: vec4<f32>;
-        }
+struct VertexOutput {
+    @builtin(position) Position: vec4<f32>;
+    @location(0) fragUV : vec2<f32>;
+    @location(1) fragPosition : vec4<f32>;
+}
 
-        @stage(vertex)
-        fn main(@location(0) pos : vec4<f32>, @location(1) uv: vec2<f32>) -> VertexOutput {
-            var output: VertexOutput;
-            output.pos = uniforms.mvpMat * pos;
-            output.fragUV = uv;
-            output.fragPosition = 0.5 * (pos * vec4<f32>(1.0, 1.0, 1.0, 1.0));
-            return output;
-        }
-        `,
+@stage(vertex)
+fn main(@location(0) position: vec4<f32>, @location(1) uv : vec2<f32>) -> VertexOutput {
+    var output : VertexOutput;
+    output.Position = uniforms.mvpMat * position;
+    output.fragUV = uv;
+    output.fragPosition = 0.5 * (position + vec4<f32>(1.0, 1.0, 1.0, 1.0));
+    return output;
+}
+      `,
   });
 
   const fsModule = device.createShaderModule({
     code: `
-        struct VertexOutput {
-            @builtin(position) pos: vec4<f32>;
-            @location(0) fragUV: vec2<f32>;
-            @location(1) fragPosition: vec4<f32>;
-        }
+struct VertexOutput {
+    @builtin(position) Position: vec4<f32>;
+    @location(0) fragUV : vec2<f32>;
+    @location(1) fragPosition : vec4<f32>;
+}
 
-        @stage(fragment)
-        fn main(input: VertexOutput) -> @location(0) vec4<f32> {
-            return input.fragPosition;
-        }
-        `,
+@binding(1) @group(0) var mySampler : sampler;
+@binding(2) @group(0) var myTexture : texture_2d<f32>;
+
+@stage(fragment)
+fn main(input : VertexOutput) -> @location(0) vec4<f32> {
+    let texColor = textureSample(myTexture, mySampler, input.fragUV * 0.8 + vec2<f32>(0.1, 0.1));
+    var f : f32;
+    if (length(texColor.rgb - vec3<f32>(0.5, 0.5, 0.5)) < 0.01) {
+        f = 1.0;
+    } else {
+        f = 0.0;
+    }
+    return (1.0 - f) * texColor + f * input.fragPosition;
+}
+`,
   });
 
   const pipeline = device.createRenderPipeline({
@@ -120,37 +128,39 @@ export async function init() {
     usage: GPUTextureUsage.RENDER_ATTACHMENT,
   });
 
-  const matrixSize = 4 * 16;
-  const offset = 256;
-  const uniformBufferSize = offset + matrixSize;
+  const uniformBufferSize = 4 * 16; // 4x4 matrix
   const uniformBuffer = device.createBuffer({
     size: uniformBufferSize,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-  const uniformBindGroup1 = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      {
-        binding: 0,
-        resource: {
-          buffer: uniformBuffer,
-          offset: 0,
-          size: matrixSize,
-        },
-      },
-    ],
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
   });
 
-  const uniformBindGroup2 = device.createBindGroup({
+  const cubeTexture = device.createTexture({
+    size: presentationSize,
+    format: presentationFormat,
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  });
+
+  const sampler = device.createSampler({
+    magFilter: "linear",
+    minFilter: "linear",
+  });
+
+  const uniformBindGroup = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
     entries: [
       {
         binding: 0,
         resource: {
           buffer: uniformBuffer,
-          offset: offset,
-          size: matrixSize,
         },
+      },
+      {
+        binding: 1,
+        resource: sampler,
+      },
+      {
+        binding: 2,
+        resource: cubeTexture.createView(),
       },
     ],
   });
@@ -173,73 +183,55 @@ export async function init() {
   };
 
   const aspect = presentationSize[0] / presentationSize[1];
-  const projMat = mat4.create();
-  mat4.perspective(projMat, (2 * Math.PI) / 5, aspect, 1, 100);
-
-  const modelMatrix1 = mat4.create();
-  mat4.translate(modelMatrix1, modelMatrix1, vec3.fromValues(-2, 0, 0));
-
-  const modelMatrix2 = mat4.create();
-  mat4.translate(modelMatrix2, modelMatrix2, vec3.fromValues(2, 0, 0));
-
-  const mvpMat1 = mat4.create() as Float32Array;
-  const mvpMat2 = mat4.create() as Float32Array;
-
-  const viewMat = mat4.create();
-  mat4.translate(viewMat, viewMat, vec3.fromValues(0, 0, -7));
-
-  const tmpMat41 = mat4.create();
-  const tmpMat42 = mat4.create();
-
-  function updateTransformationMatrix() {
+  const projectionMatrix = mat4.create();
+  mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 1, 100);
+  function getTransformationMatrix() {
+    const viewMatrix = mat4.create();
+    mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(0, 0, -4));
     const now = Date.now() / 1000;
     mat4.rotate(
-      tmpMat41,
-      modelMatrix1,
+      viewMatrix,
+      viewMatrix,
       1,
       vec3.fromValues(Math.sin(now), Math.cos(now), 0)
     );
-    mat4.rotate(
-      tmpMat42,
-      modelMatrix2,
-      1,
-      vec3.fromValues(Math.cos(now), Math.sin(now), 0)
-    );
 
-    mat4.multiply(mvpMat1, viewMat, tmpMat41);
-    mat4.multiply(mvpMat1, projMat, mvpMat1);
-    mat4.multiply(mvpMat2, viewMat, tmpMat42);
-    mat4.multiply(mvpMat2, projMat, mvpMat2);
+    const mvpMatrix = mat4.create();
+    mat4.multiply(mvpMatrix, projectionMatrix, viewMatrix);
+    return mvpMatrix as Float32Array;
   }
 
   function frame() {
-    updateTransformationMatrix();
+    const transformationMatrix = getTransformationMatrix();
+    device.queue.writeTexture;
     device.queue.writeBuffer(
       uniformBuffer,
       0,
-      mvpMat1.buffer,
-      mvpMat1.byteOffset,
-      mvpMat1.byteLength
+      transformationMatrix.buffer,
+      transformationMatrix.byteOffset,
+      transformationMatrix.byteLength
     );
-    device.queue.writeBuffer(
-      uniformBuffer,
-      offset,
-      mvpMat2.buffer,
-      mvpMat2.byteOffset,
-      mvpMat2.byteLength
-    );
-    renderPassDescriptor.colorAttachments[0].view = context
-      .getCurrentTexture()
-      .createView();
+    const swapChainTexture = context.getCurrentTexture();
+    renderPassDescriptor.colorAttachments[0].view =
+      swapChainTexture.createView();
+
     const commandEncoder = device.createCommandEncoder();
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, uniformBindGroup);
     passEncoder.setVertexBuffer(0, verticesBuffer);
-    passEncoder.setBindGroup(0, uniformBindGroup1);
-    passEncoder.draw(cubeVertexCount, 1, 0, 0);
-    passEncoder.setBindGroup(0, uniformBindGroup2);
     passEncoder.draw(cubeVertexCount, 1, 0, 0);
     passEncoder.endPass();
+
+    commandEncoder.copyTextureToTexture(
+      {
+        texture: swapChainTexture,
+      },
+      {
+        texture: cubeTexture,
+      },
+      presentationSize
+    );
 
     device.queue.submit([commandEncoder.finish()]);
 
