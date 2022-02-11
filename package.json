@@ -10,7 +10,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "gl-matrix": "^3.4.3"
+    "gl-matrix": "^3.4.3",
+    "stanford-dragon": "^1.1.1"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.11",
