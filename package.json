@@ -5,7 +5,7 @@
   "exports": "./out.js",
   "type": "module",
   "scripts": {
-    "build": "esbuild index.ts --bundle --outfile=index.js"
+    "build": "esbuild index.ts --bundle --sourcemap --outfile=index.js"
   },
   "author": "",
   "license": "ISC",
